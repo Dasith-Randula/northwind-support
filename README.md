@@ -87,13 +87,20 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. **Filters are accepted but not applied yet** (Task 1). |
+| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Supported filters are applied server-side before the filtered count, sort, and page are calculated. |
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
 | `GET /api/customers` · `/api/agents` · `/api/categories` | Reference data |
 
 Errors are `ProblemDetails`: `400` validation, `404` not found, `409` conflict or business rule.
+
+Ticket list filtering is implemented in `TicketQueries.GetPagedAsync` and composed as
+`IQueryable` predicates before `CountAsync`, `Skip`, and `Take`. Search trims surrounding
+whitespace, ignores blank values, and matches title, reference, or customer name without
+case sensitivity. Multiple filters use AND semantics; `assignedAgentId` and
+`unassignedOnly` are also combined with AND when both are supplied. The SLA status filter
+remains part of the later escalation work rather than this Task 1 change.
 
 **Seed data:** 5 categories, 6 customers (3 Premium), 6 agents (one inactive, one at their limit)
 and 40 tickets across every status, priority and SLA state.
