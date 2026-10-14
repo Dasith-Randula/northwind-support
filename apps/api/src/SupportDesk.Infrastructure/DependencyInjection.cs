@@ -52,6 +52,7 @@ public static class DependencyInjection
         services.AddSingleton(slaSettings);
         services.AddSingleton<SlaCalculator>();
 
+        services.AddScoped<ITicketCreationCoordinator, SqlServerTicketCreationCoordinator>();
         services.AddScoped<ITicketRepository, TicketRepository>();
         services.AddScoped<IAgentRepository, AgentRepository>();
         services.AddScoped<ICustomerRepository, CustomerRepository>();

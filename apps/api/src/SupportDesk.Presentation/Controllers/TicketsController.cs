@@ -29,6 +29,9 @@ public sealed class TicketsController : ControllerBase
 
     /// <summary>Raises a new ticket.</summary>
     [HttpPost]
+    [ProducesResponseType(typeof(TicketDetailDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public async Task<ActionResult<TicketDetailDto>> Create(
         CreateTicketRequest request,
         [FromServices] RaiseTicketCommandHandler handler,

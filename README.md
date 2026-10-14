@@ -89,7 +89,7 @@ Both pass on a clean checkout and neither needs a database.
 | --- | --- |
 | `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Supported filters are applied server-side before the filtered count, sort, and page are calculated. |
 | `GET /api/tickets/{id}` | One ticket |
-| `POST /api/tickets` | Create a ticket |
+| `POST /api/tickets` | Create a ticket and return its automatic priority, SLA and assignment triage |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
 | `GET /api/customers` · `/api/agents` · `/api/categories` | Reference data |
 
@@ -104,6 +104,31 @@ remains part of the later escalation work rather than this Task 1 change.
 
 **Seed data:** 5 categories, 6 customers (3 Premium), 6 agents (one inactive, one at their limit)
 and 40 tickets across every status, priority and SLA state.
+
+### Automatic triage on ticket creation
+
+`POST /api/tickets` reuses the domain `PriorityPolicy`, `SlaCalculator` and
+`AgentSelectionPolicy`. The handler loads the customer and category flags, applies the requested
+priority (defaulting to Medium and allowing forced Critical categories), calculates the due date
+from the injected UTC clock, counts current open tickets in SQL, and selects the eligible agent
+with the lowest workload and deterministic ID tie-break. The applied priority, due date, derived
+SLA status, assigned agent and a `triage` object containing the priority, SLA and assignment
+reasons are returned in the `201 Created` response.
+
+When no active, below-capacity specialist is eligible, creation still succeeds with
+`assignedAgent: null` and the policy's unassigned reason. Ticket creation now runs under a
+transaction-scoped SQL Server application lock, covering the workload read, deterministic
+selection and persistence across API instances. The operation runs through EF Core's SQL
+Server execution strategy so the user transaction is compatible with the configured
+connection retries. This serializes ticket creation and prevents the create path from
+assigning more open tickets than an agent's configured capacity. The trade-off is that
+concurrent creates wait for the lock (up to 30 seconds) and the guarantee depends on all
+ticket writers using this application path.
+
+Authentication is intentionally deferred to Task 3. Until an authenticated customer or staff
+identity is required by the API, the create request's `customerId` is trusted after existence
+validation; callers must not treat this development endpoint as an access-controlled
+customer-facing API.
 
 ## Troubleshooting
 
