@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { ticketsApi } from '../../../api/tickets';
 import type { PagedResult, TicketFilters, TicketListItem } from '../../../types/api';
@@ -29,8 +29,9 @@ interface State {
 export function useTicketList() {
   const [filters, setFilters] = useState<TicketFilters>(emptyFilters);
   const [state, setState] = useState<State>({ isLoading: true });
+  const previousFilters = useRef<TicketFilters | undefined>(undefined);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setState((current) => ({ ...current, isLoading: true, error: undefined }));
 
     try {
@@ -40,14 +41,45 @@ export function useTicketList() {
       const message = error instanceof ApiError ? error.message : 'Unable to load tickets.';
       setState((current) => ({ ...current, isLoading: false, error: message }));
     }
-  };
+  }, [filters]);
 
   useEffect(() => {
-    const handle = window.setTimeout(load, DEBOUNCE_MS);
+    const previous = previousFilters.current;
+    const nonSearchChanged =
+      previous !== undefined &&
+      (previous.status !== filters.status ||
+        previous.priority !== filters.priority ||
+        previous.categoryId !== filters.categoryId ||
+        previous.customerId !== filters.customerId ||
+        previous.assignedAgentId !== filters.assignedAgentId ||
+        previous.unassignedOnly !== filters.unassignedOnly ||
+        previous.page !== filters.page ||
+        previous.pageSize !== filters.pageSize ||
+        previous.sortBy !== filters.sortBy ||
+        previous.sortDirection !== filters.sortDirection);
+    const delay = previous === undefined || (!nonSearchChanged && previous.search !== filters.search)
+      ? DEBOUNCE_MS
+      : 0;
+
+    previousFilters.current = filters;
+    const handle = window.setTimeout(load, delay);
 
     return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- filters object identity changes every render
-  }, [filters.search, filters.page, filters.pageSize]);
+  }, [
+    filters.search,
+    filters.status,
+    filters.priority,
+    filters.categoryId,
+    filters.customerId,
+    filters.assignedAgentId,
+    filters.unassignedOnly,
+    filters.page,
+    filters.pageSize,
+    filters.sortBy,
+    filters.sortDirection,
+    filters,
+    load,
+  ]);
 
   const updateFilters = (patch: Partial<TicketFilters>) =>
     setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));
