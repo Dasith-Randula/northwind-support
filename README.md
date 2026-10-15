@@ -118,6 +118,15 @@ checked. With `slaStatus=Breached&pageSize=2`, the filtered result contained 25 
 `ORDER BY` and SQL Server `OFFSET`/`FETCH` pagination. These checks cover the listed requests;
 they do not establish that every possible filter combination was exercised.
 
+### DEFECT-117: ticket filters refresh immediately
+
+Changing a ticket filter previously did not always refresh the list. The `useTicketList` effect
+tracked search and paging values but omitted other filters, so a status change could update the
+filter state without requesting the matching tickets. Commit `1f65c9b` corrected the hook to
+request immediately when a non-search filter changes while keeping search debounced. The
+regression test passes with the fix; against the original hook it fails at the API-call assertion:
+it expected one request and received zero.
+
 **Seed data:** 5 categories, 6 customers (3 Premium), 6 agents (one inactive, one at their limit)
 and 40 tickets across every status, priority and SLA state.
 
@@ -160,6 +169,11 @@ authentication is implemented.
 The `TicketEscalations` table is introduced by the `AddTicketEscalations` EF Core migration.
 Apply it with `npm run db:migrate` before using the escalation endpoints against an existing
 database.
+
+The migration adds `IX_TicketEscalations_TicketId_EscalatedAtUtc_Id` on `TicketId`,
+`EscalatedAtUtc`, and `Id`. `TicketId` comes first because history requests filter for one ticket;
+the remaining columns support newest-first ordering, with `Id` providing a deterministic
+tie-break when escalation timestamps match.
 
 ## Troubleshooting
 
