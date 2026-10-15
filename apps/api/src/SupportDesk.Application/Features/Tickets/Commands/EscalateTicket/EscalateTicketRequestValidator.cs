@@ -11,6 +11,5 @@ public sealed class EscalateTicketRequestValidator : AbstractValidator<EscalateT
             .NotEmpty()
             .Must(reason => reason is not null && reason.Trim().Length is >= 5 and <= 500)
             .WithMessage("Reason must contain between 5 and 500 non-whitespace characters.");
-        RuleFor(x => x.EscalatedBy).NotEmpty().MaximumLength(100);
     }
 }

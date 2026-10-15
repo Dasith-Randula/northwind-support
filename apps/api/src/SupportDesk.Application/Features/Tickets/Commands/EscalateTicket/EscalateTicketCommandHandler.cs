@@ -25,6 +25,7 @@ public sealed class EscalateTicketCommandHandler(
     public async Task<EscalateTicketResponse> HandleAsync(
         int id,
         EscalateTicketRequest request,
+        int authenticatedAgentId,
         CancellationToken ct)
     {
         var ticket = await tickets.GetByIdAsync(id, ct)
@@ -46,6 +47,13 @@ public sealed class EscalateTicketCommandHandler(
         var category = await categories.GetByIdAsync(ticket.CategoryId, ct)
             ?? throw new NotFoundException("Category", ticket.CategoryId);
         var availableAgents = await agents.GetAllAsync(ct);
+        var authenticatedAgent = availableAgents.FirstOrDefault(agent =>
+            agent.Id == authenticatedAgentId && agent.IsActive);
+        if (authenticatedAgent is null)
+        {
+            throw new UnauthorizedException("The authenticated agent is no longer available.");
+        }
+
         var counts = await tickets.GetOpenTicketCountsAsync(
             availableAgents.Select(agent => agent.Id).ToArray(), ct);
 
@@ -76,7 +84,7 @@ public sealed class EscalateTicketCommandHandler(
             ticket.DueAtUtc,
             sla.DueAtUtc,
             request.Reason!,
-            request.EscalatedBy!,
+            authenticatedAgent.FullName,
             escalatedAtUtc);
 
         ticket.Escalate(toPriority, sla.DueAtUtc, assignment.AgentId, escalatedAtUtc);

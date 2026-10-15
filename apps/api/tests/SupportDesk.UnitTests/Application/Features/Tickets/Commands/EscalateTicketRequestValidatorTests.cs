@@ -13,16 +13,9 @@ public sealed class EscalateTicketRequestValidatorTests
     [InlineData("no")]
     public void RejectsShortOrMissingReason(string? reason)
     {
-        var result = _validator.Validate(new EscalateTicketRequest(reason, "lead"));
+        var result = _validator.Validate(new EscalateTicketRequest(reason));
 
         Assert.Contains(result.Errors, error => error.PropertyName == nameof(EscalateTicketRequest.Reason));
     }
 
-    [Fact]
-    public void RejectsMissingActor()
-    {
-        var result = _validator.Validate(new EscalateTicketRequest("Customer impact", null));
-
-        Assert.Contains(result.Errors, error => error.PropertyName == nameof(EscalateTicketRequest.EscalatedBy));
-    }
 }

@@ -23,7 +23,8 @@ public sealed class EscalateTicketCommandHandlerTests
 
         var response = await context.EscalateTicket.HandleAsync(
             41,
-            new EscalateTicketRequest("Customer impact increased", "lead.user"),
+            new EscalateTicketRequest("Customer impact increased"),
+            authenticatedAgentId: 2,
             CancellationToken.None);
 
         Assert.NotNull(context.AddedEscalation);
@@ -39,7 +40,7 @@ public sealed class EscalateTicketCommandHandlerTests
         Assert.Equal(2, response.Escalation.FromAgent!.Id);
         Assert.Equal(2, response.Escalation.ToAgent!.Id);
         Assert.Equal("Customer impact increased", response.Escalation.Reason);
-        Assert.Equal("lead.user", response.Escalation.EscalatedBy);
+        Assert.Equal("Ben Osei", response.Escalation.EscalatedBy);
         Assert.Equal(FixedClock.DefaultNow, response.Escalation.EscalatedAtUtc);
         Assert.Equal(FixedClock.DefaultNow.AddHours(12), response.Escalation.ToDueAtUtc);
         context.VerifySaved(Times.Once());
@@ -60,7 +61,8 @@ public sealed class EscalateTicketCommandHandlerTests
 
         var response = await context.EscalateTicket.HandleAsync(
             41,
-            new EscalateTicketRequest("More urgent customer impact", "lead.user"),
+            new EscalateTicketRequest("More urgent customer impact"),
+            authenticatedAgentId: 4,
             CancellationToken.None);
 
         Assert.Equal(4, response.Ticket.AssignedAgent!.Id);
@@ -85,7 +87,8 @@ public sealed class EscalateTicketCommandHandlerTests
         await Assert.ThrowsAsync<ConflictException>(() =>
             context.EscalateTicket.HandleAsync(
                 41,
-                new EscalateTicketRequest("Valid escalation reason", "lead.user"),
+                new EscalateTicketRequest("Valid escalation reason"),
+                authenticatedAgentId: 1,
                 CancellationToken.None));
 
         Assert.Null(context.AddedEscalation);

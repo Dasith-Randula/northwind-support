@@ -209,14 +209,23 @@ email. Passwords and password hashes are never returned.
 `GET /api/auth/me` requires a valid bearer token and loads the agent identified by its validated
 `sub` claim. It returns only the agent's ID, name and email, or `401` if the token is missing,
 invalid, expired or refers to an agent that no longer exists. Swagger's **Authorize** control can
-send the returned token to this endpoint. Other API endpoints remain unauthenticated until the next
-authentication phase. The API uses ASP.NET Core's JWT bearer handler to validate the signature,
-issuer, audience and expiry.
+send the returned token to this endpoint. Every other `/api` endpoint also requires a valid bearer
+token through a central fallback authorization policy. The login endpoint is the only public API
+route. Swagger UI and its OpenAPI document remain public. The API uses ASP.NET Core's JWT bearer
+handler to validate the signature, issuer, audience and expiry.
 
 To verify in Swagger, post the `alex.turner@northwind-support.example` email and the password fixture
 from `.env.example` to `/api/auth/login`. Copy the returned token into **Authorize**, then call
 `/api/auth/me`. Yuki's seeded account is inactive and should receive `401`; a wrong password and an
 unknown email also return the same generic `401` message.
+
+After authorizing in Swagger, verify that `GET /api/tickets` returns `200`; without a token it
+returns `401`. Protected customer, agent, category, ticket, and escalation routes follow the same
+rule. To record an escalation, send a valid reason such as
+`{"reason":"Customer impact increased"}` to `POST /api/tickets/{id}/escalate` without an
+`escalatedBy` property. A successful request returns `200`; the response and subsequent
+`GET /api/tickets/{id}/escalations` history should name the signed-in agent as the actor. An
+ineligible ticket continues to return `409`, and an unknown ticket returns `404`.
 
 JWT issuer, audience, signing key and lifetime are configured with `Jwt__Issuer`,
 `Jwt__Audience`, `Jwt__SigningKey` and `Jwt__TokenLifetimeMinutes`. The committed signing-key value
@@ -227,14 +236,15 @@ refresh-token or session infrastructure that is outside this phase.
 
 ### Ticket escalation and history
 
-`POST /api/tickets/{id}/escalate` requires a 5-500 character `reason` and an
-`escalatedBy` value (maximum 100 characters). It rejects Critical, Resolved and Closed tickets
+`POST /api/tickets/{id}/escalate` requires a 5-500 character `reason`; the caller does not supply
+`escalatedBy`. The API reads the stable agent ID from the validated JWT subject, resolves the active
+agent, and stores that agent's name as the escalation actor. Any `escalatedBy` property included in
+the request body is ignored. It rejects Critical, Resolved and Closed tickets
 with `409 Conflict`, raises priority exactly one level, recalculates the configured SLA from the
 escalation time, and preserves or reselects an eligible agent using the same capacity and
 specialization policy. Each successful escalation is saved with immutable before/after priority,
 agent and due-date values. `GET /api/tickets/{id}/escalations` queries only that ticket and
-returns the history newest first. The `escalatedBy` value is request-supplied until Task 3
-authentication is implemented.
+returns the history newest first.
 
 The `TicketEscalations` table is introduced by the `AddTicketEscalations` EF Core migration.
 Apply it with `npm run db:migrate` before using the escalation endpoints against an existing

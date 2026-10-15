@@ -8,7 +8,10 @@ public sealed class BearerAuthorizationOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
-        if (!context.MethodInfo.IsDefined(typeof(AuthorizeAttribute), inherit: true))
+        var method = context.MethodInfo;
+        var controller = method.DeclaringType;
+        if (method.IsDefined(typeof(AllowAnonymousAttribute), inherit: true) ||
+            controller?.IsDefined(typeof(AllowAnonymousAttribute), inherit: true) == true)
         {
             return;
         }

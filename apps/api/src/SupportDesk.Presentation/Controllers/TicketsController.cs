@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using SupportDesk.Application.Contracts.Common;
 using SupportDesk.Application.Contracts.Tickets;
@@ -67,12 +68,21 @@ public sealed class TicketsController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
-    public Task<EscalateTicketResponse> Escalate(
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<EscalateTicketResponse>> Escalate(
         int id,
         EscalateTicketRequest request,
         [FromServices] EscalateTicketCommandHandler handler,
-        CancellationToken ct) =>
-        handler.HandleAsync(id, request, ct);
+        CancellationToken ct)
+    {
+        var agentIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!int.TryParse(agentIdClaim, out var agentId) || agentId <= 0)
+        {
+            return Unauthorized();
+        }
+
+        return await handler.HandleAsync(id, request, agentId, ct);
+    }
 
     [HttpGet("{id:int}/escalations")]
     [ProducesResponseType(typeof(IReadOnlyList<TicketEscalationDto>), StatusCodes.Status200OK)]
