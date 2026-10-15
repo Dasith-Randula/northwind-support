@@ -5,6 +5,7 @@ using SupportDesk.Domain.Aggregates.Agents;
 using SupportDesk.Domain.Aggregates.Categories;
 using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
+using SupportDesk.Domain.BusinessRules;
 using SupportDesk.Infrastructure.Data;
 using SupportDesk.Infrastructure.Queries;
 using SupportDesk.UnitTests.TestDoubles;
@@ -13,6 +14,133 @@ namespace SupportDesk.UnitTests.Infrastructure.Queries;
 
 public sealed class TicketQueriesTests
 {
+    [Fact]
+    public async Task GetPagedAsync_FiltersEverySlaStatusInDatabaseBeforeCountAndPaging()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var now = FixedClock.DefaultNow;
+        var slaTickets = new[]
+        {
+            Ticket.Raise("TCK-1001", "No SLA", "No due date", database.FabrikamId, database.GeneralId,
+                TicketPriority.Low, now.AddDays(-2)),
+            Ticket.Raise("TCK-1002", "Met SLA", "Resolved on time", database.FabrikamId, database.GeneralId,
+                TicketPriority.High, now.AddDays(-1), now.AddHours(1)),
+            Ticket.Raise("TCK-1003", "Breached SLA", "Past due", database.FabrikamId, database.GeneralId,
+                TicketPriority.High, now.AddDays(-1), now.AddTicks(-1)),
+            Ticket.Raise("TCK-1004", "At risk SLA", "At configured threshold", database.FabrikamId, database.GeneralId,
+                TicketPriority.High, now.AddDays(-1), now.AddHours(4)),
+            Ticket.Raise("TCK-1005", "Premium at risk SLA", "Premium threshold", database.ContosoId, database.GeneralId,
+                TicketPriority.High, now.AddDays(-1), now.AddHours(2)),
+            Ticket.Raise("TCK-1006", "Within SLA", "More time remains", database.FabrikamId, database.GeneralId,
+                TicketPriority.High, now.AddDays(-1), now.AddHours(6))
+        };
+        slaTickets[1].ChangeStatus(TicketStatus.Resolved, now);
+        slaTickets[3].ChangeStatus(TicketStatus.InProgress, now);
+        slaTickets[4].ChangeStatus(TicketStatus.InProgress, now);
+        await database.Db.AddRangeAsync(slaTickets);
+        await database.Db.SaveChangesAsync();
+
+        var notApplicable = await database.Queries.GetPagedAsync(
+            new TicketQuery { SlaStatus = SlaStatus.NotApplicable, Search = "TCK-1001" }, CancellationToken.None);
+        var met = await database.Queries.GetPagedAsync(
+            new TicketQuery { SlaStatus = SlaStatus.Met, Search = "TCK-1002" }, CancellationToken.None);
+        var breached = await database.Queries.GetPagedAsync(
+            new TicketQuery { SlaStatus = SlaStatus.Breached, Search = "TCK-1003" }, CancellationToken.None);
+        var atRiskPage1 = await database.Queries.GetPagedAsync(
+            new TicketQuery
+            {
+                SlaStatus = SlaStatus.AtRisk,
+                Page = 1,
+                PageSize = 1,
+                SortBy = "createdAtUtc",
+                SortDirection = "asc"
+            }, CancellationToken.None);
+        var atRiskPage2 = await database.Queries.GetPagedAsync(
+            new TicketQuery
+            {
+                SlaStatus = SlaStatus.AtRisk,
+                Page = 2,
+                PageSize = 1,
+                SortBy = "createdAtUtc",
+                SortDirection = "asc"
+            }, CancellationToken.None);
+        var within = await database.Queries.GetPagedAsync(
+            new TicketQuery { SlaStatus = SlaStatus.WithinSla, Search = "TCK-1006" }, CancellationToken.None);
+        var combined = await database.Queries.GetPagedAsync(
+            new TicketQuery
+            {
+                Status = TicketStatus.InProgress,
+                Priority = TicketPriority.High,
+                SlaStatus = SlaStatus.AtRisk
+            }, CancellationToken.None);
+        var withoutSlaFilter = await database.Queries.GetPagedAsync(
+            new TicketQuery { Search = "TCK-1001" }, CancellationToken.None);
+
+        Assert.Equal("TCK-1001", Assert.Single(notApplicable.Items).Reference);
+        Assert.Equal("TCK-1002", Assert.Single(met.Items).Reference);
+        Assert.Equal("TCK-1003", Assert.Single(breached.Items).Reference);
+        Assert.Equal(2, atRiskPage1.TotalCount);
+        Assert.Equal(2, atRiskPage1.TotalPages);
+        Assert.Equal("TCK-1005", Assert.Single(atRiskPage1.Items).Reference);
+        Assert.Equal("TCK-1004", Assert.Single(atRiskPage2.Items).Reference);
+        Assert.Equal("TCK-1006", Assert.Single(within.Items).Reference);
+        Assert.Equal(2, combined.TotalCount);
+        Assert.All(combined.Items, x => Assert.Equal(TicketStatus.InProgress, x.Status));
+        Assert.Equal("TCK-1001", Assert.Single(withoutSlaFilter.Items).Reference);
+        Assert.All(notApplicable.Items, x => Assert.Equal(SlaStatus.NotApplicable, x.SlaStatus));
+        Assert.All(met.Items, x => Assert.Equal(SlaStatus.Met, x.SlaStatus));
+        Assert.All(breached.Items, x => Assert.Equal(SlaStatus.Breached, x.SlaStatus));
+        Assert.All(atRiskPage1.Items, x => Assert.Equal(SlaStatus.AtRisk, x.SlaStatus));
+        Assert.All(atRiskPage2.Items, x => Assert.Equal(SlaStatus.AtRisk, x.SlaStatus));
+        Assert.All(within.Items, x => Assert.Equal(SlaStatus.WithinSla, x.SlaStatus));
+        Assert.All(combined.Items, x => Assert.Equal(SlaStatus.AtRisk, x.SlaStatus));
+    }
+
+    [Fact]
+    public async Task GetPagedAsync_AtRiskCutoffUsesConfiguredMinimumSlaWindow()
+    {
+        var settings = new SlaPolicySettings
+        {
+            PremiumCustomerMultiplier = 0.1,
+            MinimumWindowHours = 2,
+            AtRiskThresholdPercent = 50
+        };
+        await using var database = await TestDatabase.CreateAsync(settings);
+        var now = FixedClock.DefaultNow;
+        var premiumCriticalTicket = Ticket.Raise(
+            "TCK-1010",
+            "Premium critical SLA",
+            "The minimum SLA window determines the at-risk cutoff.",
+            database.ContosoId,
+            database.GeneralId,
+            TicketPriority.Critical,
+            now.AddMinutes(-30),
+            now.AddHours(1));
+        await database.Db.AddAsync(premiumCriticalTicket);
+        await database.Db.SaveChangesAsync();
+
+        var withConfiguredFloor = await database.Queries.GetPagedAsync(
+            new TicketQuery { SlaStatus = SlaStatus.AtRisk, Search = "TCK-1010" },
+            CancellationToken.None);
+        var withoutFloor = new TicketQueries(
+            database.Db,
+            new FixedClock(),
+            new SlaPolicySettings
+            {
+                PremiumCustomerMultiplier = 0.1,
+                MinimumWindowHours = 1,
+                AtRiskThresholdPercent = 50
+            });
+        var belowFloorResult = await withoutFloor.GetPagedAsync(
+            new TicketQuery { SlaStatus = SlaStatus.AtRisk, Search = "TCK-1010" },
+            CancellationToken.None);
+
+        var ticket = Assert.Single(withConfiguredFloor.Items);
+        Assert.Equal(SlaStatus.AtRisk, ticket.SlaStatus);
+        Assert.Equal(0, belowFloorResult.TotalCount);
+        Assert.Empty(belowFloorResult.Items);
+    }
+
     [Fact]
     public async Task GetPagedAsync_FiltersByPriorityBeforeCounting()
     {
@@ -229,6 +357,7 @@ public sealed class TicketQueriesTests
             SupportDbContext db,
             TicketQueries queries,
             int contosoId,
+            int fabrikamId,
             int generalId,
             int alexId)
         {
@@ -236,6 +365,7 @@ public sealed class TicketQueriesTests
             Db = db;
             Queries = queries;
             ContosoId = contosoId;
+            FabrikamId = fabrikamId;
             GeneralId = generalId;
             AlexId = alexId;
         }
@@ -248,11 +378,13 @@ public sealed class TicketQueriesTests
 
         public int ContosoId { get; }
 
+        public int FabrikamId { get; }
+
         public int GeneralId { get; }
 
         public int AlexId { get; }
 
-        public static async Task<TestDatabase> CreateAsync()
+        public static async Task<TestDatabase> CreateAsync(SlaPolicySettings? slaSettings = null)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -300,8 +432,12 @@ public sealed class TicketQueriesTests
             return new TestDatabase(
                 connection,
                 db,
-                new TicketQueries(db, new FixedClock()),
+                new TicketQueries(
+                    db,
+                    new FixedClock(),
+                    slaSettings ?? new SlaPolicySettings { AtRiskThresholdPercent = 50 }),
                 contoso.Id,
+                fabrikam.Id,
                 general.Id,
                 alex.Id);
         }

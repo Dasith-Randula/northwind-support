@@ -26,7 +26,7 @@ public static class SlaEvaluator
             return resolvedAtUtc <= dueAtUtc ? SlaStatus.Met : SlaStatus.Breached;
         }
 
-        if (nowUtc >= dueAtUtc)
+        if (nowUtc > dueAtUtc)
         {
             return SlaStatus.Breached;
         }

@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Application.Contracts.Common;
@@ -6,6 +7,7 @@ using SupportDesk.Domain.Aggregates.Agents;
 using SupportDesk.Domain.Aggregates.Categories;
 using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
+using SupportDesk.Domain.BusinessRules;
 using SupportDesk.Infrastructure.Data;
 
 namespace SupportDesk.Infrastructure.Queries;
@@ -14,18 +16,20 @@ namespace SupportDesk.Infrastructure.Queries;
 /// Ticket reads. Projected in the database and never tracked. Aggregates hold only each
 /// other's ids, so the customer, category and agent labels are joined in here, on the read side.
 /// </summary>
-public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQueries
+public sealed class TicketQueries(
+    SupportDbContext db,
+    IClock clock,
+    SlaPolicySettings slaSettings) : ITicketQueries
 {
     /// <remarks>
     /// Applies filters, then sorts and pages the ticket list in the database.
     /// </remarks>
     public async Task<PagedResult<TicketListItemDto>> GetPagedAsync(TicketQuery query, CancellationToken ct)
     {
-        var tickets = ApplyFilters(TicketsWithLabels(), query);
+        var now = clock.UtcNow;
+        var tickets = ApplyFilters(TicketsWithLabels(), query, now);
 
         var totalCount = await tickets.CountAsync(ct);
-
-        var now = clock.UtcNow;
 
         var items = await ApplySort(tickets, query)
             .Skip((query.Page - 1) * query.PageSize)
@@ -44,7 +48,13 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = EvaluateStatus(
+                    x.Ticket.Priority,
+                    x.Ticket.DueAtUtc,
+                    x.Ticket.ResolvedAtUtc,
+                    x.Customer.Tier,
+                    now,
+                    slaSettings)
             })
             .ToListAsync(ct);
 
@@ -73,7 +83,13 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = EvaluateStatus(
+                    x.Ticket.Priority,
+                    x.Ticket.DueAtUtc,
+                    x.Ticket.ResolvedAtUtc,
+                    x.Customer.Tier,
+                    now,
+                    slaSettings)
             })
             .FirstOrDefaultAsync(ct);
     }
@@ -100,7 +116,13 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = EvaluateStatus(
+                    x.Ticket.Priority,
+                    x.Ticket.DueAtUtc,
+                    x.Ticket.ResolvedAtUtc,
+                    x.Customer.Tier,
+                    now,
+                    slaSettings)
             })
             .ToListAsync(ct);
     }
@@ -115,9 +137,10 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
         from agent in db.Set<Agent>().Where(a => a.Id == ticket.AssignedAgentId).DefaultIfEmpty()
         select new TicketWithLabels { Ticket = ticket, Customer = customer, Category = category, Agent = agent };
 
-    private static IQueryable<TicketWithLabels> ApplyFilters(
+    private IQueryable<TicketWithLabels> ApplyFilters(
         IQueryable<TicketWithLabels> source,
-        TicketQuery query)
+        TicketQuery query,
+        DateTime now)
     {
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -138,6 +161,11 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
         if (query.Priority is not null)
         {
             source = source.Where(x => x.Ticket.Priority == query.Priority);
+        }
+
+        if (query.SlaStatus is not null)
+        {
+            source = ApplySlaStatusFilter(source, query.SlaStatus.Value, now);
         }
 
         if (query.CategoryId is not null)
@@ -162,6 +190,112 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
 
         return source;
     }
+
+    private IQueryable<TicketWithLabels> ApplySlaStatusFilter(
+        IQueryable<TicketWithLabels> source,
+        SlaStatus status,
+        DateTime now)
+    {
+        if (status == SlaStatus.NotApplicable)
+        {
+            return source.Where(x => x.Ticket.DueAtUtc == null);
+        }
+
+        if (status == SlaStatus.Met)
+        {
+            return source.Where(x => x.Ticket.DueAtUtc != null
+                && x.Ticket.ResolvedAtUtc != null
+                && x.Ticket.ResolvedAtUtc <= x.Ticket.DueAtUtc);
+        }
+
+        if (status == SlaStatus.Breached)
+        {
+            return source.Where(x => x.Ticket.DueAtUtc != null
+                && ((x.Ticket.ResolvedAtUtc != null && x.Ticket.ResolvedAtUtc > x.Ticket.DueAtUtc)
+                    || (x.Ticket.ResolvedAtUtc == null && now > x.Ticket.DueAtUtc)));
+        }
+
+        if (status == SlaStatus.AtRisk)
+        {
+            var riskWindow = BuildAtRiskWindowPredicate(now);
+            return source.Where(x => x.Ticket.DueAtUtc != null
+                && x.Ticket.ResolvedAtUtc == null
+                && x.Ticket.DueAtUtc >= now)
+                .Where(riskWindow);
+        }
+
+        // At this point only unresolved tickets that are neither past due nor AtRisk qualify.
+        var outsideRiskWindow = BuildAtRiskWindowPredicate(now, negate: true);
+        return source.Where(x => x.Ticket.DueAtUtc != null
+            && x.Ticket.ResolvedAtUtc == null
+            && x.Ticket.DueAtUtc > now)
+            .Where(outsideRiskWindow);
+    }
+
+    private Expression<Func<TicketWithLabels, bool>> BuildAtRiskWindowPredicate(
+        DateTime now,
+        bool negate = false)
+    {
+        var row = Expression.Parameter(typeof(TicketWithLabels), "x");
+        var ticket = Expression.Property(row, nameof(TicketWithLabels.Ticket));
+        var customer = Expression.Property(row, nameof(TicketWithLabels.Customer));
+        var priority = Expression.Property(ticket, nameof(Ticket.Priority));
+        var tier = Expression.Property(customer, nameof(Customer.Tier));
+        var due = Expression.Property(ticket, nameof(Ticket.DueAtUtc));
+        var dueValue = Expression.Property(due, nameof(Nullable<DateTime>.Value));
+        Expression? body = null;
+
+        foreach (var ticketPriority in Enum.GetValues<TicketPriority>())
+        {
+            foreach (var customerTier in Enum.GetValues<CustomerTier>())
+            {
+                var matchesWindow = Expression.AndAlso(
+                    Expression.Equal(priority, Expression.Constant(ticketPriority)),
+                    Expression.Equal(tier, Expression.Constant(customerTier)));
+                var withinRiskCutoff = Expression.LessThanOrEqual(
+                    dueValue,
+                    Expression.Constant(AtRiskCutoff(ticketPriority, customerTier, now)));
+                var window = Expression.AndAlso(matchesWindow, withinRiskCutoff);
+                body = body is null ? window : Expression.OrElse(body, window);
+            }
+        }
+
+        return Expression.Lambda<Func<TicketWithLabels, bool>>(
+            negate ? Expression.Not(body!) : body!, row);
+    }
+
+    private DateTime AtRiskCutoff(TicketPriority priority, CustomerTier tier, DateTime now)
+    {
+        var window = EffectiveWindow(priority, tier, slaSettings);
+        var thresholdTicks = (long)(window.Ticks * slaSettings.AtRiskThresholdPercent / 100);
+        return now.AddTicks(thresholdTicks);
+    }
+
+    private static TimeSpan EffectiveWindow(
+        TicketPriority priority,
+        CustomerTier tier,
+        SlaPolicySettings settings)
+    {
+        var baseHours = settings.BaseWindowHours[priority];
+        var effectiveHours = tier == CustomerTier.Premium
+            ? Math.Max(baseHours * settings.PremiumCustomerMultiplier, settings.MinimumWindowHours)
+            : baseHours;
+        return TimeSpan.FromHours(effectiveHours);
+    }
+
+    private static SlaStatus EvaluateStatus(
+        TicketPriority priority,
+        DateTime? dueAtUtc,
+        DateTime? resolvedAtUtc,
+        CustomerTier tier,
+        DateTime now,
+        SlaPolicySettings settings) =>
+        SlaEvaluator.Evaluate(
+            dueAtUtc,
+            resolvedAtUtc,
+            now,
+            EffectiveWindow(priority, tier, settings),
+            settings.AtRiskThresholdPercent);
 
     private static IQueryable<TicketWithLabels> ApplySort(IQueryable<TicketWithLabels> source, TicketQuery query)
     {

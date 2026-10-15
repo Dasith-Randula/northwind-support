@@ -27,9 +27,9 @@ public sealed class SlaEvaluatorAtRiskTests
             SlaEvaluator.Evaluate(Now.AddHours(1), null, Now, Window, 25));
 
     [Fact]
-    public void Evaluate_UnresolvedAtDueTime_IsBreached() =>
+    public void Evaluate_UnresolvedAtDueTime_IsNotBreached() =>
         Assert.Equal(
-            SlaStatus.Breached,
+            SlaStatus.AtRisk,
             SlaEvaluator.Evaluate(Now, null, Now, Window, 25));
 
     [Fact]

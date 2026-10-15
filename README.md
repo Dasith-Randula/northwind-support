@@ -87,7 +87,7 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Supported filters are applied server-side before the filtered count, sort, and page are calculated. |
+| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `slaStatus`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Supported filters are applied server-side before the filtered count, sort, and page are calculated. |
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket and return its automatic priority, SLA and assignment triage |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
@@ -101,8 +101,22 @@ Ticket list filtering is implemented in `TicketQueries.GetPagedAsync` and compos
 `IQueryable` predicates before `CountAsync`, `Skip`, and `Take`. Search trims surrounding
 whitespace, ignores blank values, and matches title, reference, or customer name without
 case sensitivity. Multiple filters use AND semantics; `assignedAgentId` and
-`unassignedOnly` are also combined with AND when both are supplied. The SLA status filter
-remains part of the later escalation work rather than this Task 1 change.
+`unassignedOnly` are also combined with AND when both are supplied. `slaStatus` accepts
+`NotApplicable`, `Met`, `Breached`, `AtRisk`, or `WithinSla`; its SQL predicate is applied to
+the same query before `CountAsync`, sorting, and pagination. Status is derived with one injected
+UTC time per request. At-risk cutoffs use the configured priority window, Premium multiplier,
+minimum window, and threshold; an escalation's current priority and recalculated due date define
+its current SLA window without additional persisted status or window fields. The returned list
+status uses the same evaluator and settings as the filter. A future filter can be added as another
+predicate in `TicketQueries.ApplyFilters`, preserving the existing count and paging pipeline.
+
+Ticket query tests use SQLite to exercise relational filtering, count, and pagination. Live SQL
+Server verification returned 25 tickets for `slaStatus=Breached` and 1 for
+`slaStatus=AtRisk`. The combined `status=New&priority=Medium&slaStatus=AtRisk` filter was also
+checked. With `slaStatus=Breached&pageSize=2`, the filtered result contained 25 tickets across
+13 pages. EF command logs showed the filters in SQL `WHERE` before `COUNT`, followed by stable
+`ORDER BY` and SQL Server `OFFSET`/`FETCH` pagination. These checks cover the listed requests;
+they do not establish that every possible filter combination was exercised.
 
 **Seed data:** 5 categories, 6 customers (3 Premium), 6 agents (one inactive, one at their limit)
 and 40 tickets across every status, priority and SLA state.
