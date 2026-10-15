@@ -37,7 +37,7 @@ public sealed class SupportDbSeeder(
         "yuki.tanaka@northwind-support.example"
     ];
 
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    /// <summary>Backfills known seed-agent credentials and seeds demo data when tickets are absent.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         var developmentPassword = configuration[DevelopmentPasswordConfigurationKey];

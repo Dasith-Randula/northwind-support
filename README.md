@@ -185,10 +185,10 @@ assigning more open tickets than an agent's configured capacity. The trade-off i
 concurrent creates wait for the lock (up to 30 seconds) and the guarantee depends on all
 ticket writers using this application path.
 
-Authentication is intentionally deferred to Task 3. Until an authenticated customer or staff
-identity is required by the API, the create request's `customerId` is trusted after existence
-validation; callers must not treat this development endpoint as an access-controlled
-customer-facing API.
+API requests now require an authenticated agent bearer token, but ticket creation does not have an
+authenticated customer identity or ownership check. The create request's `customerId` is trusted
+after existence validation; callers must not treat this development endpoint as an
+access-controlled customer-facing API.
 
 The six seeded development agents have hashes initialized from the local-only password fixture
 documented in `.env.example`. Do not reuse this fixture outside a local development database.
@@ -234,6 +234,30 @@ in `.env.example` is a placeholder and is rejected by the API until replaced. Ge
 local configuration sets tokens to 60 minutes, limiting their exposure window while avoiding
 refresh-token or session infrastructure that is outside this phase.
 
+### Frontend authenticated sessions
+
+The web app's `/login` page signs in through `POST /api/auth/login`. All other application routes
+require a valid session; an unauthenticated visitor is sent to `/login`, and a successful sign-in
+returns them to the requested path and query string. A direct login with no saved destination opens
+the ticket list. On reload, the app checks a saved token with `GET /api/auth/me` before rendering
+protected pages. The header shows the API-provided agent name, and **Log out** clears the session.
+
+The frontend stores only the JWT in `sessionStorage`. It survives reloads in the same browser tab
+and is removed when that tab's session ends. The API client adds it as a bearer token to protected
+requests. A protected API `401` clears the token and agent state and redirects to login while keeping
+the current destination; a login `401` remains an invalid-credentials message. The password is never
+stored. Because JavaScript can read `sessionStorage`, a cross-site scripting vulnerability could
+expose the token; this assessment does not add refresh tokens or an HttpOnly cookie session.
+
+To try the web flow locally, start the API with the Development and JWT environment variables above,
+then run `npm run web` and open `http://localhost:5173`. Sign in with an active seeded agent and the
+development password fixture documented in `.env.example`.
+
+For a manual check, open `/tickets` in a private browser tab and confirm it redirects to login,
+then sign in and verify the ticket list loads with the agent name in the header. Reload the page to
+check session restoration, escalate an eligible ticket to verify the actor field is absent, and log
+out to confirm protected pages return to login.
+
 ### Ticket escalation and history
 
 `POST /api/tickets/{id}/escalate` requires a 5-500 character `reason`; the caller does not supply
@@ -259,11 +283,36 @@ The ticket list and detail page share the same text-labelled SLA indicator. The 
 filter uses the existing `slaStatus` query parameter, combines with the other filters, resets to
 the first page, and requests immediately while search remains debounced. The detail page shows
 newest-first escalation history and provides a reason form with the API's 5-500 character
-validation; until authentication is implemented, the form also asks for the actor's name. A
-successful escalation updates the ticket and reloads its history, while server errors including
-conflicts are shown without applying a failed update. The create confirmation displays the
-priority, due date, and assignment outcome returned by the API, including its reason when the
-ticket is left unassigned.
+validation. The API records the authenticated agent as actor, and the history displays that
+server-provided name. A successful escalation updates the ticket and reloads its history, while
+server errors including conflicts are shown without applying a failed update. The create confirmation
+displays the priority, due date, and assignment outcome returned by the API, including its reason
+when the ticket is left unassigned.
+
+## Known limitations
+
+- A bearer token in `sessionStorage` is readable by JavaScript; an XSS flaw could expose it. Logout
+  clears the browser's copy, but a copied JWT remains valid until its configured 60-minute expiry.
+- All authenticated agents currently have the same API access. There is no roles or permissions
+  matrix, registration, password reset, MFA, OAuth/SSO, refresh-token flow, account lockout or
+  rate limiting.
+- The seeded password is a local development fixture only. Production credential provisioning is
+  outside this assessment implementation.
+
+## AI usage
+
+OpenAI Codex was used to inspect the assignment and existing application, implement the frontend
+login/session integration, add focused regression tests, and review the final changes. The workflow
+that was effective was to inspect the existing API client, routes and test patterns first, then make
+targeted changes and verify them with automated tests, builds, lint, formatting and a Git diff.
+Generated frontend changes were verified with 49 Vitest tests; the backend suite passed 132 unit
+tests and 4 architecture tests. During the final audit, Codex identified missing integrated coverage
+for a protected request returning 401 and redirecting back to login; a regression test was added.
+This audit did not find a production defect introduced by AI-generated code.
+
+The candidate should add a personal example of one AI suggestion accepted unchanged and one changed
+or rejected, with the reason, and any AI-introduced bug they observed. Those historical details are
+not inferable from the repository or this verification run.
 
 ## Troubleshooting
 

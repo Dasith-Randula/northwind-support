@@ -17,9 +17,6 @@ describe('EscalationPanel', () => {
   it('shows a validation error for a short reason and does not call the API', () => {
     render(<EscalationPanel ticket={ticketDetail()} onEscalated={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'why' } });
-    fireEvent.change(screen.getByLabelText('Escalated by (development)'), {
-      target: { value: 'Jordan Lee' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
 
     expect(screen.getByText('Reason must contain between 5 and 500 non-whitespace characters.'))
@@ -35,9 +32,6 @@ describe('EscalationPanel', () => {
     render(<EscalationPanel ticket={ticketDetail()} onEscalated={onEscalated} />);
     fireEvent.change(screen.getByLabelText('Reason'), {
       target: { value: 'The customer impact increased.' },
-    });
-    fireEvent.change(screen.getByLabelText('Escalated by (development)'), {
-      target: { value: 'Jordan Lee' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
 
@@ -58,16 +52,13 @@ describe('EscalationPanel', () => {
     fireEvent.change(screen.getByLabelText('Reason'), {
       target: { value: '  The customer impact increased.  ' },
     });
-    fireEvent.change(screen.getByLabelText('Escalated by (development)'), {
-      target: { value: '  Jordan Lee  ' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
 
     await waitFor(() => expect(onEscalated).toHaveBeenCalledWith(response));
     expect(mocks.escalateTicket).toHaveBeenCalledWith(12, {
       reason: 'The customer impact increased.',
-      escalatedBy: 'Jordan Lee',
     });
+    expect(screen.queryByLabelText(/Escalated by/i)).not.toBeInTheDocument();
   });
 
   it.each([

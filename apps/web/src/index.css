@@ -76,6 +76,23 @@ a {
   font-weight: 600;
 }
 
+.app__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  color: var(--colour-muted);
+  font-size: 0.9rem;
+}
+
+.login-page {
+  max-width: 640px;
+}
+
+.login-card {
+  margin-top: 24px;
+}
+
 .app__main {
   max-width: 1200px;
   margin: 0 auto;
@@ -340,6 +357,18 @@ textarea[aria-invalid='true'] {
 @media (max-width: 900px) {
   .detail-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .app__header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .app__account {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 

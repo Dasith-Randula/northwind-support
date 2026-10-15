@@ -56,9 +56,6 @@ function enterValidEscalation() {
   fireEvent.change(screen.getByLabelText('Reason'), {
     target: { value: 'The customer impact increased.' },
   });
-  fireEvent.change(screen.getByLabelText('Escalated by (development)'), {
-    target: { value: 'Jordan Lee' },
-  });
   fireEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
 }
 
