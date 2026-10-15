@@ -175,6 +175,16 @@ The migration adds `IX_TicketEscalations_TicketId_EscalatedAtUtc_Id` on `TicketI
 the remaining columns support newest-first ordering, with `Id` providing a deterministic
 tie-break when escalation timestamps match.
 
+The ticket list and detail page share the same text-labelled SLA indicator. The list's SLA status
+filter uses the existing `slaStatus` query parameter, combines with the other filters, resets to
+the first page, and requests immediately while search remains debounced. The detail page shows
+newest-first escalation history and provides a reason form with the API's 5-500 character
+validation; until authentication is implemented, the form also asks for the actor's name. A
+successful escalation updates the ticket and reloads its history, while server errors including
+conflicts are shown without applying a failed update. The create confirmation displays the
+priority, due date, and assignment outcome returned by the API, including its reason when the
+ticket is left unassigned.
+
 ## Troubleshooting
 
 | Symptom | Fix |

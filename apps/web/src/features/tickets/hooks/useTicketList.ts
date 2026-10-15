@@ -13,6 +13,7 @@ export const emptyFilters: TicketFilters = {
   customerId: undefined,
   assignedAgentId: undefined,
   unassignedOnly: false,
+  slaStatus: undefined,
   page: 1,
   pageSize: 20,
   sortBy: 'createdAtUtc',
@@ -53,6 +54,7 @@ export function useTicketList() {
         previous.customerId !== filters.customerId ||
         previous.assignedAgentId !== filters.assignedAgentId ||
         previous.unassignedOnly !== filters.unassignedOnly ||
+        previous.slaStatus !== filters.slaStatus ||
         previous.page !== filters.page ||
         previous.pageSize !== filters.pageSize ||
         previous.sortBy !== filters.sortBy ||
@@ -73,6 +75,7 @@ export function useTicketList() {
     filters.customerId,
     filters.assignedAgentId,
     filters.unassignedOnly,
+    filters.slaStatus,
     filters.page,
     filters.pageSize,
     filters.sortBy,

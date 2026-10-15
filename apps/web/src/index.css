@@ -381,6 +381,48 @@ textarea[aria-invalid='true'] {
   margin-bottom: var(--gap);
 }
 
+.triage-result,
+.escalation-history__details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px var(--gap);
+  margin: 0;
+}
+
+.triage-result > div,
+.escalation-history__details > div {
+  min-width: 0;
+}
+
+.triage-result dt,
+.escalation-history__details dt {
+  color: var(--colour-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.triage-result dd,
+.escalation-history__details dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.escalation-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.escalation-history__entry + .escalation-history__entry {
+  border-top: 1px solid var(--colour-border);
+  margin-top: var(--gap);
+  padding-top: var(--gap);
+}
+
+.escalation-history__entry h3 {
+  margin: 0 0 12px;
+}
+
 .error p {
   margin: 0 0 8px;
 }

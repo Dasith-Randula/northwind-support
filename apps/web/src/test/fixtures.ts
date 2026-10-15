@@ -1,4 +1,4 @@
-import type { PagedResult, TicketListItem } from '../types/api';
+import type { PagedResult, TicketDetail, TicketEscalation, TicketListItem } from '../types/api';
 
 /** A list row with sensible defaults, so tests only state what they care about. */
 export function ticketListItem(overrides: Partial<TicketListItem> = {}): TicketListItem {
@@ -27,5 +27,39 @@ export function page(items: TicketListItem[]): PagedResult<TicketListItem> {
     pageSize: 20,
     totalCount: items.length,
     totalPages: 1,
+  };
+}
+
+export function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
+  return {
+    ...ticketListItem(),
+    description: 'The invoice total differs from the order.',
+    customer: {
+      id: 2,
+      name: 'Fabrikam Inc',
+      tier: 'Standard',
+      email: 'billing@fabrikam.example',
+      phone: null,
+    },
+    category: { id: 2, name: 'Billing', requiresSpecialist: true },
+    triage: null,
+    ...overrides,
+  };
+}
+
+export function ticketEscalation(overrides: Partial<TicketEscalation> = {}): TicketEscalation {
+  return {
+    id: 3,
+    ticketId: 12,
+    fromPriority: 'Medium',
+    toPriority: 'High',
+    fromAgent: { id: 4, fullName: 'Sara Lindqvist' },
+    toAgent: null,
+    fromDueAtUtc: '2026-09-24T16:12:00Z',
+    toDueAtUtc: '2026-09-25T00:12:00Z',
+    reason: 'Customer impact has increased.',
+    escalatedBy: 'Jordan Lee',
+    escalatedAtUtc: '2026-09-24T12:12:00Z',
+    ...overrides,
   };
 }

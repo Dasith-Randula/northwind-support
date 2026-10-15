@@ -81,6 +81,7 @@ describe('useTicketList', () => {
     ['customer', { customerId: 3 }, { customerId: 3 }],
     ['assigned agent', { assignedAgentId: 4 }, { assignedAgentId: 4 }],
     ['unassigned-only', { unassignedOnly: true }, { unassignedOnly: true }],
+    ['SLA status', { slaStatus: 'AtRisk' }, { slaStatus: 'AtRisk' }],
     ['sort', { sortBy: 'priority', sortDirection: 'asc' }, { sortBy: 'priority', sortDirection: 'asc' }],
   ] as const)('requests immediately when the %s filter changes', async (_name, patch, expected) => {
     const { result } = renderHook(() => useTicketList());
@@ -203,6 +204,37 @@ describe('useTicketList', () => {
         sortBy: 'createdAtUtc',
         sortDirection: 'desc',
       }),
+    );
+  });
+
+  it('combines the SLA filter with existing filters and resets pagination', async () => {
+    const { result } = renderHook(() => useTicketList());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    act(() => {
+      result.current.updateFilters({ status: 'New', page: 4 });
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    getTickets.mockClear();
+
+    act(() => {
+      result.current.updateFilters({ slaStatus: 'AtRisk' });
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(getTickets).toHaveBeenCalledTimes(1);
+    expect(getTickets).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'New', slaStatus: 'AtRisk', page: 1 }),
     );
   });
 });

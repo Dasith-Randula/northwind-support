@@ -35,7 +35,7 @@ export function TicketSummary({ ticket }: TicketSummaryProps) {
           <dt>SLA</dt>
           <dd>
             <SlaCell dueAtUtc={ticket.dueAtUtc} slaStatus={ticket.slaStatus} />
-            {ticket.dueAtUtc && (
+            {ticket.dueAtUtc && ticket.status !== 'Resolved' && ticket.status !== 'Closed' && (
               <span className="summary__note">Due {formatRelativeToNow(ticket.dueAtUtc)}</span>
             )}
           </dd>
