@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Aggregates.Agents;
@@ -17,11 +18,37 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    IAgentPasswordHasher passwordHasher,
+    IConfiguration configuration,
+    ILogger<SupportDbSeeder> logger)
 {
+    public const string DevelopmentPasswordConfigurationKey = "DevelopmentCredentials:Password";
+
+    private static readonly string[] SeedAgentEmails =
+    [
+        "alex.turner@northwind-support.example",
+        "ben.osei@northwind-support.example",
+        "priya.nair@northwind-support.example",
+        "sara.lindqvist@northwind-support.example",
+        "marcus.doyle@northwind-support.example",
+        "yuki.tanaka@northwind-support.example"
+    ];
+
     /// <summary>Seeds the database, unless it already has tickets in it.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
+        var developmentPassword = configuration[DevelopmentPasswordConfigurationKey];
+        if (string.IsNullOrWhiteSpace(developmentPassword))
+        {
+            throw new InvalidOperationException(
+                $"Required development credential configuration '{DevelopmentPasswordConfigurationKey}' is missing.");
+        }
+
+        await BackfillSeedAgentCredentialsAsync(developmentPassword, ct);
+
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
             logger.LogInformation("Seed data already present; skipping.");
@@ -39,6 +66,8 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         db.AddRange(agents);
         await db.SaveChangesAsync(ct);
 
+        await BackfillSeedAgentCredentialsAsync(developmentPassword, ct);
+
         SeedSpecializations(agents, categories);
         await db.SaveChangesAsync(ct);
 
@@ -48,6 +77,25 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         logger.LogInformation(
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
+    }
+
+    private async Task BackfillSeedAgentCredentialsAsync(string developmentPassword, CancellationToken ct)
+    {
+        var agents = await db.Set<Agent>()
+            .Where(agent => SeedAgentEmails.Contains(agent.Email))
+            .ToListAsync(ct);
+        var changed = false;
+
+        foreach (var agent in agents.Where(agent => string.IsNullOrWhiteSpace(agent.PasswordHash)))
+        {
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, developmentPassword));
+            changed = true;
+        }
+
+        if (changed)
+        {
+            await db.SaveChangesAsync(ct);
+        }
     }
 
     private static List<Category> SeedCategories() =>

@@ -46,10 +46,9 @@ Full requirements are in **[`ASSIGNMENT_CANDIDATE.md`](ASSIGNMENT_CANDIDATE.md)*
 **Prerequisites:** .NET SDK 10 (`global.json`), Node.js 22 (`.nvmrc`; 20.19+ works), Docker.
 
 ```bash
-cp .env.example .env          # optional, every value has a working default
+cp .env.example .env          # SQL Server container settings
 npm install                   # installs the web app
 npm run db:up                 # SQL Server 2022 in Docker on localhost:1433
-npm run api                   # terminal 1: migrates, seeds, then serves the API
 npm run web                   # terminal 2: React dev server
 ```
 
@@ -59,11 +58,45 @@ npm run web                   # terminal 2: React dev server
 | API | https://localhost:7043 (also http://localhost:5043) |
 | Swagger | https://localhost:7043/swagger |
 
-In Development the API applies migrations and seeds demo data on startup. **Never commit real
-credentials.**
+In Development the API applies migrations and seeds demo data on startup. Before running `npm run api`,
+set the seed password and JWT settings in that terminal. The `.env.example` file is for reference
+and Docker Compose; `dotnet run` does not automatically load `.env` files. The API fails at startup
+if required development credential or JWT configuration is missing or invalid. **Never commit real
+credentials.** These PowerShell variables belong to the current terminal process, so run the setup
+again whenever you open a new terminal before starting the API.
+
+For PowerShell, use the fixture value from `.env.example` and generate a fresh local JWT signing key:
+
+```powershell
+$env:DevelopmentCredentials__Password = (Get-Content .env.example | Where-Object { $_ -like 'DevelopmentCredentials__Password=*' }).Split('=', 2)[1]
+$env:Jwt__Issuer = "NorthwindSupportDesk"
+$env:Jwt__Audience = "NorthwindSupportDesk"
+$env:Jwt__TokenLifetimeMinutes = "60"
+$random = [Security.Cryptography.RandomNumberGenerator]::Create()
+$keyBytes = New-Object byte[] 32
+$random.GetBytes($keyBytes)
+$env:Jwt__SigningKey = [Convert]::ToBase64String($keyBytes)
+npm run api
+```
+
+On macOS or Linux, run this from the repository root:
+
+```bash
+export DevelopmentCredentials__Password="$(sed -n 's/^DevelopmentCredentials__Password=//p' .env.example)"
+export Jwt__Issuer=NorthwindSupportDesk
+export Jwt__Audience=NorthwindSupportDesk
+export Jwt__TokenLifetimeMinutes=60
+export Jwt__SigningKey="$(openssl rand -base64 32)"
+npm run api
+```
+
+For Visual Studio, provide the same environment variables in your local process environment or
+start Visual Studio from a terminal where they are set. Do not save a real signing key in the tracked
+`launchSettings.json` file.
 
 **Visual Studio 2026:** run `npm run db:up`, open `SupportDesk.sln`, set
-**SupportDesk.Presentation** as the startup project, and press F5 on the **https** profile.
+**SupportDesk.Presentation** as the startup project, ensure the required environment variables are
+available to it, and press F5 on the **https** profile.
 
 ## Tests
 
@@ -87,6 +120,8 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
+| `POST /api/auth/login` | Verify active agent credentials and return a signed JWT, expiry and agent details |
+| `GET /api/auth/me` | Return the current agent from a validated bearer token |
 | `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `slaStatus`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Supported filters are applied server-side before the filtered count, sort, and page are calculated. |
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket and return its automatic priority, SLA and assignment triage |
@@ -154,6 +189,41 @@ Authentication is intentionally deferred to Task 3. Until an authenticated custo
 identity is required by the API, the create request's `customerId` is trusted after existence
 validation; callers must not treat this development endpoint as an access-controlled
 customer-facing API.
+
+The six seeded development agents have hashes initialized from the local-only password fixture
+documented in `.env.example`. Do not reuse this fixture outside a local development database.
+
+The nullable `PasswordHash` is stored on `Agent` because agents are the identities this assessment
+will authenticate, and a separate `Users` table would duplicate those identities without adding a
+separate account lifecycle. Keeping the field nullable also lets existing agent rows be migrated
+and backfilled safely.
+
+### Agent login and JWTs
+
+`POST /api/auth/login` accepts an email and password. It issues a signed bearer token only for an
+active agent with a valid password hash. Unknown emails, incorrect passwords, inactive agents and
+agents with missing or unusable hashes receive the same `401` response, without disclosing whether
+an account exists. The response includes `accessToken`, `expiresAtUtc`, and the agent's ID, name and
+email. Passwords and password hashes are never returned.
+
+`GET /api/auth/me` requires a valid bearer token and loads the agent identified by its validated
+`sub` claim. It returns only the agent's ID, name and email, or `401` if the token is missing,
+invalid, expired or refers to an agent that no longer exists. Swagger's **Authorize** control can
+send the returned token to this endpoint. Other API endpoints remain unauthenticated until the next
+authentication phase. The API uses ASP.NET Core's JWT bearer handler to validate the signature,
+issuer, audience and expiry.
+
+To verify in Swagger, post the `alex.turner@northwind-support.example` email and the password fixture
+from `.env.example` to `/api/auth/login`. Copy the returned token into **Authorize**, then call
+`/api/auth/me`. Yuki's seeded account is inactive and should receive `401`; a wrong password and an
+unknown email also return the same generic `401` message.
+
+JWT issuer, audience, signing key and lifetime are configured with `Jwt__Issuer`,
+`Jwt__Audience`, `Jwt__SigningKey` and `Jwt__TokenLifetimeMinutes`. The committed signing-key value
+in `.env.example` is a placeholder and is rejected by the API until replaced. Generate a random
+32-byte local key as shown in the setup instructions; never commit a real signing key. The documented
+local configuration sets tokens to 60 minutes, limiting their exposure window while avoiding
+refresh-token or session infrastructure that is outside this phase.
 
 ### Ticket escalation and history
 
