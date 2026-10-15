@@ -3,6 +3,7 @@ using SupportDesk.Application.Abstractions;
 using SupportDesk.Application.Contracts.Tickets;
 using SupportDesk.Application.Features.Tickets.Commands.AssignTicket;
 using SupportDesk.Application.Features.Tickets.Commands.ChangeTicketStatus;
+using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
 using SupportDesk.Application.Features.Tickets.Commands.RaiseTicket;
 using SupportDesk.Application.Features.Tickets.Queries.GetTicket;
 using SupportDesk.Domain.Aggregates.Agents;
@@ -51,6 +52,11 @@ internal sealed class TicketCommandTestContext
         Tickets.Setup(t => t.AddAsync(It.IsAny<Ticket>(), It.IsAny<CancellationToken>()))
             .Callback<Ticket, CancellationToken>((ticket, _) => AddedTicket = ticket)
             .Returns(Task.CompletedTask);
+        Tickets.Setup(t => t.AddEscalationAsync(
+                It.IsAny<TicketEscalation>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<TicketEscalation, CancellationToken>((escalation, _) => AddedEscalation = escalation)
+            .Returns(Task.CompletedTask);
 
         // Every command returns the ticket as re-read once its change has been saved.
         TicketQueries.Setup(q => q.GetDetailAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -74,6 +80,12 @@ internal sealed class TicketCommandTestContext
         AssignTicket = new AssignTicketCommandHandler(
             Tickets.Object, Agents.Object, UnitOfWork.Object, Clock, getTicket,
             NullLogger<AssignTicketCommandHandler>.Instance);
+
+        EscalateTicket = new EscalateTicketCommandHandler(
+            Tickets.Object, Customers.Object, Categories.Object, Agents.Object,
+            new SlaCalculator(new SlaPolicySettings()), new SlaPolicySettings(),
+            UnitOfWork.Object, Clock, getTicket,
+            NullLogger<EscalateTicketCommandHandler>.Instance);
     }
 
     public Mock<ITicketRepository> Tickets { get; } = new();
@@ -98,10 +110,14 @@ internal sealed class TicketCommandTestContext
 
     public AssignTicketCommandHandler AssignTicket { get; }
 
+    public EscalateTicketCommandHandler EscalateTicket { get; }
+
     /// <summary>The ticket handed to the repository by the last create call.</summary>
     public Ticket? AddedTicket { get; private set; }
 
     public Ticket? ExistingResponseTicket { get; private set; }
+
+    public TicketEscalation? AddedEscalation { get; private set; }
 
     public Customer ResponseCustomer { get; set; } = SetId(new Customer(
         "Contoso Ltd",

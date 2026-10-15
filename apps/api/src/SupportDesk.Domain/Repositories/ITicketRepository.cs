@@ -19,4 +19,10 @@ public interface ITicketRepository
         CancellationToken ct);
 
     Task AddAsync(Ticket ticket, CancellationToken ct);
+
+    Task AddEscalationAsync(TicketEscalation escalation, CancellationToken ct);
+
+    Task<bool> ExistsAsync(int id, CancellationToken ct);
+
+    Task<IReadOnlyList<TicketEscalation>> GetEscalationsAsync(int ticketId, CancellationToken ct);
 }

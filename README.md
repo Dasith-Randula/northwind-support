@@ -91,6 +91,8 @@ Both pass on a clean checkout and neither needs a database.
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket and return its automatic priority, SLA and assignment triage |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
+| `POST /api/tickets/{id}/escalate` | Escalate an open ticket by one priority level and recalculate its SLA and assignment |
+| `GET /api/tickets/{id}/escalations` | Read immutable escalation history, newest first |
 | `GET /api/customers` · `/api/agents` · `/api/categories` | Reference data |
 
 Errors are `ProblemDetails`: `400` validation, `404` not found, `409` conflict or business rule.
@@ -129,6 +131,21 @@ Authentication is intentionally deferred to Task 3. Until an authenticated custo
 identity is required by the API, the create request's `customerId` is trusted after existence
 validation; callers must not treat this development endpoint as an access-controlled
 customer-facing API.
+
+### Ticket escalation and history
+
+`POST /api/tickets/{id}/escalate` requires a 5-500 character `reason` and an
+`escalatedBy` value (maximum 100 characters). It rejects Critical, Resolved and Closed tickets
+with `409 Conflict`, raises priority exactly one level, recalculates the configured SLA from the
+escalation time, and preserves or reselects an eligible agent using the same capacity and
+specialization policy. Each successful escalation is saved with immutable before/after priority,
+agent and due-date values. `GET /api/tickets/{id}/escalations` queries only that ticket and
+returns the history newest first. The `escalatedBy` value is request-supplied until Task 3
+authentication is implemented.
+
+The `TicketEscalations` table is introduced by the `AddTicketEscalations` EF Core migration.
+Apply it with `npm run db:migrate` before using the escalation endpoints against an existing
+database.
 
 ## Troubleshooting
 

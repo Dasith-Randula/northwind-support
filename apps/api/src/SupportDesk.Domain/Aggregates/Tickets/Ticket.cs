@@ -114,4 +114,28 @@ public sealed class Ticket : AggregateRoot
         AssignedAgentId = agentId;
         UpdatedAtUtc = nowUtc;
     }
+
+    public void Escalate(
+        TicketPriority priority,
+        DateTime dueAtUtc,
+        int? assignedAgentId,
+        DateTime nowUtc)
+    {
+        if (Status is TicketStatus.Resolved or TicketStatus.Closed)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is {Status} and cannot be escalated.");
+        }
+
+        if (priority != Priority + 1)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} must escalate exactly one priority level.");
+        }
+
+        Priority = priority;
+        DueAtUtc = dueAtUtc;
+        AssignedAgentId = assignedAgentId;
+        UpdatedAtUtc = nowUtc;
+    }
 }
