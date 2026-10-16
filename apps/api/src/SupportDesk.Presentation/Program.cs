@@ -62,5 +62,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapDatabaseHealthEndpoint();
 
 app.Run();

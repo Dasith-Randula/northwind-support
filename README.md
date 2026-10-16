@@ -17,7 +17,7 @@ Full requirements are in **[`ASSIGNMENT_CANDIDATE.md`](ASSIGNMENT_CANDIDATE.md)*
 | 1 | **Fix a defect, add server-side filtering** | Root cause fixed with a regression test; every list filter applied in the database with a correct count | ~2.5 h |
 | 2 | **Ticket escalation & assignment** | Automatic triage on create, escalation with history, SLA status, UI for all of it | ~7 h |
 | 3 | **Login and authentication** | Agents sign in; API rejects unauthenticated calls; login UI | ~4 h |
-| 4 | **Dockerise the API** *(optional)* | `docker compose up` gives a migrated, seeded API with no baked-in secret | ~1.5 h |
+| 4 | **Dockerise the API** | `docker compose up` gives a migrated, seeded API with no baked-in secret | ~1.5 h |
 
 ### Guidance
 
@@ -76,7 +76,7 @@ $random = [Security.Cryptography.RandomNumberGenerator]::Create()
 $keyBytes = New-Object byte[] 32
 $random.GetBytes($keyBytes)
 $env:Jwt__SigningKey = [Convert]::ToBase64String($keyBytes)
-npm run api
+npm.cmd run api
 ```
 
 On macOS or Linux, run this from the repository root:
@@ -98,13 +98,137 @@ start Visual Studio from a terminal where they are set. Do not save a real signi
 **SupportDesk.Presentation** as the startup project, ensure the required environment variables are
 available to it, and press F5 on the **https** profile.
 
+## Docker API
+
+Docker API development requires Docker Desktop or a compatible Docker Engine with Docker Compose,
+along with the .NET 10 and Node.js prerequisites above for host-based development. The React app
+remains outside Docker.
+
+Create `.env` only if it does not already exist, then edit it locally:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Set a random JWT signing key of at least 32 bytes in `.env`. The required settings are
+`MSSQL_SA_PASSWORD`, `Jwt__Issuer`, `Jwt__Audience`, `Jwt__SigningKey`,
+`Jwt__TokenLifetimeMinutes`, and `DevelopmentCredentials__Password`. The example supplies local
+development values for these settings. Do not commit `.env` or place real secrets in tracked files.
+Compose passes configuration to the API at container startup, and environment variables take
+precedence over appsettings files. The Docker build excludes `appsettings.Development.json`, which
+retains the local connection fallback for host-based development. The image contains the general
+`appsettings.json` settings only; the database connection and JWT configuration are supplied at
+runtime. Compose supplies the API environment name through `ASPNETCORE_ENVIRONMENT`, defaulting to
+`Development`.
+
+For host-based `npm run api`, `ConnectionStrings__Default` uses `localhost,1433`. The API container
+uses the Compose service hostname `sqlserver` for the same `SupportDesk` database. Compose starts the
+API only after the SQL Server health check reports healthy. The API listens on port 8080 inside its
+container and is published only on the local machine at `http://localhost:5080`.
+SQL Server data remains in the existing persistent named volume across normal Compose starts.
+
+Start SQL Server and the API with:
+
+```powershell
+docker compose up --build
+```
+
+The API runs in Development for this assessment. Its existing startup path applies EF Core migrations
+before running the demo seeder. The seeder preserves existing data and skips demo ticket creation
+when tickets already exist. Production deployments should apply migrations through a controlled
+deployment step instead of having every API instance run migrations at startup.
+
+Check database readiness without a token:
+
+```powershell
+Invoke-WebRequest http://localhost:5080/health
+```
+
+The endpoint checks database connectivity and returns HTTP 200 when it can connect or HTTP 503 when
+the database is unavailable. It returns no connection details.
+
+To obtain a token, use an active seeded agent email and the value of
+`DevelopmentCredentials__Password` from `.env`. The fixture is development-only. For example, in
+PowerShell:
+
+```powershell
+$password = Read-Host "Development seed password"
+$body = @{ email = "alex.turner@northwind-support.example"; password = $password } | ConvertTo-Json
+$session = Invoke-RestMethod -Method Post -Uri http://localhost:5080/api/auth/login `
+  -ContentType "application/json" -Body $body
+$headers = @{ Authorization = "Bearer $($session.accessToken)" }
+Invoke-RestMethod -Uri http://localhost:5080/api/tickets -Headers $headers
+Remove-Variable password, body, session, headers
+```
+
+To run the Vite frontend against the Docker API, keep the frontend on the host and set the proxy
+target for that terminal:
+
+```powershell
+$env:VITE_API_PROXY_TARGET = "http://localhost:5080"
+npm.cmd run web
+```
+
+The default in `apps/web/.env.example` remains `https://localhost:7043` for the existing host-based
+API workflow. The Vite proxy forwards the normal `/api` paths, including login and bearer-authenticated
+requests.
+
+### Docker verification status
+
+`apps/api/Dockerfile` uses a .NET 10 SDK stage to restore, build and publish, followed by an ASP.NET
+10 runtime stage. The root `.dockerignore` excludes build output, `node_modules`, `.git`, `.env`
+files, and the web app from the build context. `docker compose config --quiet` was checked during
+configuration work with temporary, non-production values. For the cache check, a disposable build
+context excluded `.env`, appsettings development configuration, `.git`, and local build output.
+After a comment-only change to a `.cs` file in that context, Docker reported the `dotnet restore`
+step as `CACHED`; source copy and publish reran.
+
+Image sizes below are Docker's `Size` values in bytes, inspected on the same engine. The final API
+image uses the ASP.NET runtime stage; it includes the application and is larger than that base image,
+but smaller than the SDK image.
+
+| Image | Size |
+| --- | ---: |
+| `northwind-support-api:latest` | 454,867,645 bytes |
+| `mcr.microsoft.com/dotnet/aspnet:10.0` | 340,011,267 bytes |
+| `mcr.microsoft.com/dotnet/sdk:10.0` | 1,303,854,013 bytes |
+
+The Compose service check `docker compose exec -T api whoami` returned `app`. Image inspection also
+reported user `app` and exposed port `8080/tcp`. To repeat these checks, use `docker compose exec api
+whoami` and `docker image inspect northwind-support-api:latest --format '{{.Config.User}} {{json
+.Config.ExposedPorts}}'`.
+
+The following end-to-end results are **manual evidence reported by the user**, not independently run
+by Codex in this verification. The existing SQL Server volume was left in place, with 47 tickets. The
+API started at `http://localhost:5080`; anonymous `GET /health` returned 200 and anonymous
+`GET /api/tickets` returned 401. Login as seeded Alex Turner and authenticated ticket requests worked.
+The Vite frontend logged in through the Docker API and loaded tickets, detail, SLA, and escalation
+history. For the isolated project `northwind-dk6`, the user reported successful migration and seed,
+anonymous health 200, login, and authenticated ticket retrieval with 40 tickets (5 categories, 6
+customers, 6 agents, and 40 tickets seeded).
+
+The automated health endpoint tests also cover a reachable database returning 200, an unavailable
+database returning 503, and anonymous access while another endpoint remains protected. Do not run
+`docker compose down -v` against the normal development project or remove either database volume.
+
 ## Tests
 
 ```bash
 npm test                      # dotnet test, then the web tests (Vitest)
 ```
 
-Both pass on a clean checkout and neither needs a database.
+At final Task 4 verification, all 187 tests passed: 134 backend unit tests, 4 architecture tests,
+and 49 frontend tests. If Windows PowerShell has `NODE_ENV=production`, Vitest inherits that setting
+and React's production build does not expose `React.act`, which Testing Library needs. Set
+`NODE_ENV=test` in the current PowerShell session before running the suite:
+
+```powershell
+$env:NODE_ENV = 'test'
+npm.cmd test
+```
+
+The API and web production build, web lint, `dotnet format --verify-no-changes --no-restore`, and
+`git diff --check` also passed.
 
 ## Commands
 
@@ -120,6 +244,7 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
+| `GET /health` | Public database-connectivity check; returns 200 when reachable and 503 otherwise |
 | `POST /api/auth/login` | Verify active agent credentials and return a signed JWT, expiry and agent details |
 | `GET /api/auth/me` | Return the current agent from a validated bearer token |
 | `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `slaStatus`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Supported filters are applied server-side before the filtered count, sort, and page are calculated. |
@@ -209,10 +334,11 @@ email. Passwords and password hashes are never returned.
 `GET /api/auth/me` requires a valid bearer token and loads the agent identified by its validated
 `sub` claim. It returns only the agent's ID, name and email, or `401` if the token is missing,
 invalid, expired or refers to an agent that no longer exists. Swagger's **Authorize** control can
-send the returned token to this endpoint. Every other `/api` endpoint also requires a valid bearer
-token through a central fallback authorization policy. The login endpoint is the only public API
-route. Swagger UI and its OpenAPI document remain public. The API uses ASP.NET Core's JWT bearer
-handler to validate the signature, issuer, audience and expiry.
+send the returned token to this endpoint. The central fallback authorization policy requires a
+valid bearer token for protected API endpoints. `POST /api/auth/login` and `GET /health` are
+accessible anonymously; the health endpoint checks database connectivity and returns `200` when
+available or `503` otherwise. In Development, Swagger UI and its OpenAPI document are also public.
+The API uses ASP.NET Core's JWT bearer handler to validate the signature, issuer, audience and expiry.
 
 To verify in Swagger, post the `alex.turner@northwind-support.example` email and the password fixture
 from `.env.example` to `/api/auth/login`. Copy the returned token into **Authorize**, then call
@@ -305,9 +431,10 @@ OpenAI Codex was used to inspect the assignment and existing application, implem
 login/session integration, add focused regression tests, and review the final changes. The workflow
 that was effective was to inspect the existing API client, routes and test patterns first, then make
 targeted changes and verify them with automated tests, builds, lint, formatting and a Git diff.
-Generated frontend changes were verified with 49 Vitest tests; the backend suite passed 132 unit
-tests and 4 architecture tests. During the final audit, Codex identified missing integrated coverage
-for a protected request returning 401 and redirecting back to login; a regression test was added.
+Generated frontend changes were verified with 49 Vitest tests; the backend suite passed 134 unit
+tests and 4 architecture tests (187 automated tests total). During the final audit, Codex identified
+missing integrated coverage for a protected request returning 401 and redirecting back to login; a
+regression test was added.
 This audit did not find a production defect introduced by AI-generated code.
 
 The candidate should add a personal example of one AI suggestion accepted unchanged and one changed

@@ -6,7 +6,7 @@ services:
     container_name: supportdesk-sql
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Local_Dev_Password1}"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in the untracked .env file}"
       MSSQL_PID: Developer
     ports:
       - "1433:1433"
@@ -22,6 +22,24 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "127.0.0.1:5080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Development}"
+      ConnectionStrings__Default: "Server=sqlserver,1433;Database=SupportDesk;User Id=sa;Password=${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in the untracked .env file};TrustServerCertificate=True;Encrypt=False"
+      Jwt__Issuer: "${Jwt__Issuer:?Set Jwt__Issuer in the untracked .env file}"
+      Jwt__Audience: "${Jwt__Audience:?Set Jwt__Audience in the untracked .env file}"
+      Jwt__SigningKey: "${Jwt__SigningKey:?Set Jwt__SigningKey in the untracked .env file}"
+      Jwt__TokenLifetimeMinutes: "${Jwt__TokenLifetimeMinutes:?Set Jwt__TokenLifetimeMinutes in the untracked .env file}"
+      DevelopmentCredentials__Password: "${DevelopmentCredentials__Password:?Set DevelopmentCredentials__Password in the untracked .env file}"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
 
 volumes:
   supportdesk-sql:
